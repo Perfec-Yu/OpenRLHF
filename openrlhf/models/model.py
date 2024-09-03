@@ -260,6 +260,7 @@ def _get_critic_model(base_pretrained_model, base_llm_model, value_head_prefix="
             input_ids: torch.LongTensor = None,
             action_mask: Optional[torch.Tensor] = None,
             attention_mask: Optional[torch.Tensor] = None,
+            num_actions: Optional[int] = None,
             return_output=False,
         ) -> torch.Tensor:
             if not self.packing_samples:
@@ -275,7 +276,8 @@ def _get_critic_model(base_pretrained_model, base_llm_model, value_head_prefix="
             )
             last_hidden_states = outputs["last_hidden_state"]
             values = getattr(self, self.value_head_prefix)(last_hidden_states).squeeze(-1)[:, :-1]
-            num_actions = action_mask.size(1)
+            if num_actions is None:
+                num_actions = action_mask.size(1)
 
             # normalize reward
             if self.normalize_reward:

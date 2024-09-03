@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Callable, Literal, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -47,6 +47,76 @@ class PolicyLoss(nn.Module):
         loss = -torch.min(surr1, surr2)
         loss = masked_mean(loss, action_mask, dim=-1).mean()
         return loss
+
+
+class OfflinePolicyLoss(nn.Module):
+    """
+    Offline Policy Loss for PPO
+    """
+
+    def __init__(self, clip_eps: float = 0.2, rev_kl:bool=True, 
+                 normalize_advantages:Literal["none", "rewardkl_no_std", "rewardkl_rloo", "rewardkl_rloo_no_std", "rewardkl"]= "none",
+                 all_reduce_op: Optional[Callable]=None) -> None:
+        super().__init__()
+        self.clip_eps = clip_eps
+        self.rev_kl = rev_kl
+        self.normalize_advantages = normalize_advantages
+        self.all_reduce_op = all_reduce_op
+
+    def forward(
+        self,
+        log_probs: torch.Tensor,
+        old_log_probs: torch.Tensor,
+        advantages: torch.Tensor,
+        kl_coeff: float,
+        action_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        
+        ratio = (log_probs - old_log_probs).exp().detach()
+        if self.rev_kl:
+            kl_term = (old_log_probs - log_probs)
+            estimated_kl = - ratio * kl_term - ratio + 1
+        else:
+            kl_term = (old_log_probs - log_probs).exp() - 1
+            estimated_kl = ratio - 1 - (log_probs - old_log_probs)
+        
+        advantages = (advantages + kl_coeff * kl_term).detach()
+        if self.normalize_advantages != "none":
+            
+            if self.all_reduce_op is not None:
+                sum_and_count = torch.tensor([(advantages * action_mask).sum(), action_mask.sum()], device=advantages.device)
+                all_sum, all_count = self.all_reduce_op(sum_and_count, "sum")
+                mean_advantage = all_sum / all_count
+            else:
+                mean_advantage = masked_mean(advantages, action_mask)
+            
+            if self.normalize_advantages == "rewardkl_no_std":
+                advantages = (advantages - mean_advantage)
+            elif self.normalize_advantages == "rewardkl_rloo_no_std":
+                advantages = (all_count * advantages - all_sum) / (all_count - 1)
+            else:
+                std = ((advantages - mean_advantage) ** 2).sum()
+                if self.all_reduce_op is not None:
+                    all_std = self.all_reduce_op(std, "sum")
+                    rstd = (all_std / all_count).clamp(min=1e-8).rsqrt()
+                else:
+                    rstd = std.clamp(min=1e-8).rsqrt()
+                if self.normalize_advantages == "rewardkl_rloo":
+                    advantages = (all_count * advantages - all_sum) * rstd / (all_count - 1)
+                else:
+                    advantages = (advantages - mean_advantage) * rstd
+            
+            advantages = advantages.detach()
+
+        
+        surr1 = (ratio * advantages) * log_probs
+        surr2 = (ratio.clamp(1 - self.clip_eps, 1 + self.clip_eps) * advantages) * log_probs
+        loss = -torch.min(surr1, surr2)
+        loss = masked_mean(loss, action_mask, dim=-1).mean()
+
+        # calculate the proportion of samples that use surr1 instead of surr2
+        surr1_portion = masked_mean(surr1 > surr2, action_mask).detach()
+        return loss, masked_mean(estimated_kl, action_mask).detach(), surr1_portion
 
 
 class ValueLoss(nn.Module):

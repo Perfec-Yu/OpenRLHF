@@ -154,6 +154,14 @@ data
 > By default, we use `train` and `test` as splits to distinguish training and testing datasets from Huggingface.
 > The ``JSON key`` options depends on the specific datasets. See [Reward Dataset](https://github.com/OpenRLHF/OpenRLHF/blob/main/openrlhf/datasets/reward_dataset.py#L10) and [SFT Dataset](https://github.com/OpenRLHF/OpenRLHF/blob/main/openrlhf/datasets/sft_dataset.py#L9)
 
+### PPO Offline Training
+
+```bash
+deepspeed --module openrlhf.cli.train_ppo_offline   --pretrain ./checkpoints/google-gemma-2-2b-it   --save_path ./checkpoints/gemma-2-2b-ppo_offline   --save_steps -1   --logging_steps 1   --eval_steps -1   --micro_train_batch_size 2   --micro_rollout_batch_size 4   --rollout_batch_size 1024   --max_epochs 1   --prompt_max_len 1024   --generate_max_len 1024   --zero_stage 2   --bf16   --actor_learning_rate 5e-7   --critic_learning_rate 9e-6   --init_kl_coef 0.01   --prompt_data ./data/wscore.py   --i
+nput_key "prompt"   --output_key "responses"   --reward_key "scores"   --apply_chat_template   --max_samples 100000   --reward_normalization "reward_only_rloo"   --adam_offload  --flash_attn   --gradient_checkpointing   --n_samples_per_prompt 10
+```
+
+
 ### Supervised Fine-tuning
 
 OpenRLHF's model checkpoint is fully compatible with HuggingFace models. You can specify the model name or path using `--pretrain  {name or path}`, `--reward_pretrain  {name or path}` and `--critic_pretrain  {name or path}`. We have provided some pre-trained checkpoints and datasets on [HuggingFace OpenRLHF](https://huggingface.co/OpenRLHF).
